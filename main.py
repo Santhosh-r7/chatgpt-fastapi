@@ -11,14 +11,12 @@ from sqlalchemy.orm import sessionmaker, Session, relationship, declarative_base
 import uvicorn
 app = FastAPI()
 
-# -------------------- Database Setup --------------------
 DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres"
 
 engine = create_engine(DATABASE_URL, echo=True)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
-# -------------------- Dependency --------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -26,7 +24,6 @@ def get_db():
     finally:
         db.close()
 
-# -------------------- SQLAlchemy Models --------------------
 class Chat(Base):
     __tablename__ = "chat"
 
@@ -67,7 +64,6 @@ class File(Base):
 
 #Base.metadata.create_all(bind=engine)
 
-# -------------------- Pydantic Models --------------------
 class ChatCreate(BaseModel):
     name: str
 
@@ -104,11 +100,32 @@ class ConversationOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class historyout(BaseModel):
+    role: str
+    content: str
+
+    model_config = {"from_attributes": True}
+
 class UserMessageInput(BaseModel):
     message: str
 
+class FileUpload(BaseModel):
+    name: str
+    path: str
+    file_type: str
 
-# -------------------- API Endpoints --------------------
+    model_config = {"from_attributes": True}
+
+class FileOut(BaseModel):
+    id: UUID
+    name: str
+    path: str
+    file_type: str
+    chat_id: UUID
+
+    model_config = {"from_attributes": True}
+
+
 def rag_reply(user_message :str) -> str:
     return "recieved and returned"
 
@@ -125,23 +142,12 @@ def get_all_chats(db: Session = Depends(get_db)):
     chats = db.query(Chat).all()
     return chats
 
-'''
-@app.post("/chathistory/{name}", response_model= ChatResponse)
-def chathistory(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = models.User(**user.dict())
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-'''
 @app.post("/chat/{chat_id}", response_model=List[ConversationOut])
 def handle_chat_message(chat_id: UUID, user_input: UserMessageInput, db: Session = Depends(get_db)):
-    # 1. Check if chat exists
     chat = db.query(Chat).filter(Chat.id == chat_id).first()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    # 2. Save user message
     user_msg = Conversation(
         role="user",
         content=user_input.message,
@@ -151,10 +157,8 @@ def handle_chat_message(chat_id: UUID, user_input: UserMessageInput, db: Session
     db.commit()
     db.refresh(user_msg)
 
-    # 3. Generate system reply
     reply_text = rag_reply(user_input.message)
 
-    # 4. Save system reply
     system_msg = Conversation(
         role="system",
         content=reply_text,
@@ -162,30 +166,26 @@ def handle_chat_message(chat_id: UUID, user_input: UserMessageInput, db: Session
     )
     db.add(system_msg)
 
-    # 5. Update chat's updated_at timestamp
     chat.updated_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(system_msg)
 
     return [user_msg, system_msg]
-'''
-@app.post("/usefile_name/{name}/{file}", response_model= ChatResponse)
-def usefile_name(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = models.User(**user.dict())
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
 
-@app.post("/addfile", response_model= ChatResponse)
-def addfile(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = models.User(**user.dict())
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
 
-'''
+@app.get("/chathistory/{chat_id}", response_model= List[historyout])
+def chathistory(chat_id: UUID, db: Session = Depends(get_db)):
+    chats = db.query(Conversation).filter(Conversation.chat_id == chat_id).all()
+    return chats
+
+@app.post("/addfile/{chat_id}", response_model= FileOut)
+def addfile(chat_id: UUID, file: FileUpload, db: Session = Depends(get_db)):
+    new_file = File(name=file.name,path=file.path,file_type=file.file_type,chat_id = chat_id)
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+    return new_file
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
